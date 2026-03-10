@@ -2,6 +2,7 @@
 #include <thread>
 #include "node/node.hpp"
 #include "messages/NodeNetworkInfo.hpp"
+#include <arpa/inet.h>
 
 class Server
 {
@@ -13,6 +14,6 @@ private:
     int port;
     Node *node;
 
-    void handleClient(int clientSocket);
-    NodeNetworkInfo getInPeerNetworkInfo(const sockaddr_in &peerAddress);
+    void handleClient(int clientSocket, const NodeNetworkInfo &clientNetworkInfo);
+    NodeNetworkInfo getInPeerNetworkInfo(const sockaddr_in &inPeerAddress);
 };

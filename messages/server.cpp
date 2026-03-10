@@ -40,25 +40,27 @@ void Server::start()
     listen(serverFd, 10);
 
     LOG_SUCCESS("Server initialized > listening on port: " + to_string(ntohs(address.sin_port)));
-    // Accept and dispatch client conections loop
+    // Accept and dispatch client peer conections loop
     while (true)
     {
         sockaddr_in clientAddr;
         socklen_t len = sizeof(clientAddr);
 
         int clientSocket = accept(serverFd, (sockaddr *)&clientAddr, &len);
+        NodeNetworkInfo inPeerNetworkInfo = getInPeerNetworkInfo(clientAddr);
+
         if (clientSocket < 0)
         {
             LOG_ERROR("Server: Error client accept conection");
             continue;
         }
 
-        thread t(&Server::handleClient, this, clientSocket);
+        thread t(&Server::handleClient, this, clientSocket, inPeerNetworkInfo);
         t.detach();
     }
 }
 
-void Server::handleClient(int clientSocket)
+void Server::handleClient(int clientSocket, const NodeNetworkInfo &clientNetworkInfo)
 {
     if (!node)
     {
@@ -73,15 +75,23 @@ void Server::handleClient(int clientSocket)
     if (bytesRead > 0)
     {
         string msg(buffer, bytesRead);
-        node->processMessage(msg);
+        node->processMessage(msg, clientNetworkInfo);
     }
 
     close(clientSocket);
 }
 
-NodeNetworkInfo Server::getInPeerNetworkInfo(const sockaddr_in &peerAddress)
+NodeNetworkInfo Server::getInPeerNetworkInfo(const sockaddr_in &inPeerAddress)
 {
     NodeNetworkInfo res;
 
     char ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &inPeerAddress.sin_addr, ip, INET_ADDRSTRLEN);
+
+    int port = ntohs(inPeerAddress.sin_port);
+
+    res.ip_address = ip;
+    res.port = port;
+
+    return res;
 }

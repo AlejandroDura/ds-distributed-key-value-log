@@ -16,7 +16,7 @@ class Node
 {
 public:
     Node(bool isLeader, int port, const vector<string> &peerList);
-    void processMessage(const string &msg);
+    void processMessage(const string &msg, const NodeNetworkInfo &senderNetworkInfo);
     void printState();
     void printLog();
     void run();

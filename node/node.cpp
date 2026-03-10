@@ -42,7 +42,7 @@ void Node::applyOperation(const LogEntry &entry)
     log.push_back(entry);
 }
 
-void Node::processMessage(const string &msg)
+void Node::processMessage(const string &msg, const NodeNetworkInfo &senderNetworkInfo)
 {
     MessageType mType = Protocol::parseType(msg);
 
