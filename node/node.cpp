@@ -9,11 +9,22 @@
 
 #include <csignal>
 
-Node::Node(bool isLeader, int port, const vector<string> &peerList)
+Node::Node(bool isLeader, string selfIp, int selfPort, const vector<string> &peerList)
 {
-    server = new Server(port, this);
+    server = new Server(selfIp, selfPort, this);
     leader = isLeader;
-    peers = peerList;
+
+    for (int i = 0; i < peerList.size(); i++)
+    {
+        NodeNetworkInfo peer = Protocol::deserializeNodeNetworkInfo(peerList[i]);
+        peer.nodeId = i;
+        peers[i] = peer;
+
+        if (peer.ip_address == selfIp && peer.port == selfPort)
+        {
+            self = peer;
+        }
+    }
 }
 
 void Node::run()
@@ -42,8 +53,9 @@ void Node::applyOperation(const LogEntry &entry)
     log.push_back(entry);
 }
 
-void Node::processMessage(const string &msg, const NodeNetworkInfo &senderNetworkInfo)
+void Node::processMessage(const string &msg)
 {
+    Message messageData = Protocol::deserialize(msg);
     MessageType mType = Protocol::parseType(msg);
 
     if (mType == MessageType::CLIENT_SET)
@@ -55,37 +67,61 @@ void Node::processMessage(const string &msg, const NodeNetworkInfo &senderNetwor
             return;
         }
 
-        LogEntry newEntry = Protocol::deserialize(msg);
-
-        if (newEntry.key != "")
+        if (messageData.key != "")
         {
             {
                 lock_guard<mutex> lock(dataMutex);
+                LogEntry newEntry;
+
+                newEntry.key = messageData.key;
+                newEntry.value = messageData.value;
                 newEntry.index = log.size();
+
+                messageData.logIndex = newEntry.index;
+                messageData.nodeId = self.nodeId;
+
                 applyOperation(newEntry);
                 LOG_REPLICATION("[NODE LEADER] Aplying local operation");
             }
-            // Broadcast to followers via TCP
-            replicateToFollowers(newEntry);
+
+            replicateToFollowers(messageData);
         }
     }
     else if (mType == MessageType::REPLICATION)
     {
+        if (messageData.nodeId < 0)
+        {
+            return;
+        }
+
         if (leader)
         {
             LOG_ERROR("[NODE] Leader does not accept replication messages");
             return;
         }
 
-        LogEntry newEntry = Protocol::deserialize(msg);
+        NodeNetworkInfo msgSenderNetworkInfo = getNodeNetInfo(messageData.nodeId);
 
-        if (newEntry.index >= 0 && newEntry.key != "")
+        if (messageData.logIndex >= 0 && messageData.key != "")
         {
             {
                 lock_guard<mutex> lock(dataMutex);
+                LogEntry newEntry;
+                newEntry.index = messageData.logIndex;
+                newEntry.key = messageData.key;
+                newEntry.value = messageData.value;
                 applyOperation(newEntry);
                 LOG_REPLICATION("[NODE FOLLOWER] Aplying local operation");
             }
+
+            sendAckToLeader(messageData.logIndex, msgSenderNetworkInfo);
+        }
+    }
+    else if (mType == MessageType::ACK_NLE)
+    {
+        if (leader)
+        {
+            handleAck(msg);
         }
     }
     else
@@ -97,13 +133,14 @@ void Node::processMessage(const string &msg, const NodeNetworkInfo &senderNetwor
     printState();
 }
 
-void Node::replicateToFollowers(const LogEntry &entry)
+void Node::replicateToFollowers(const Message &messageData)
 {
-    string msg = Protocol::serialize(MessageType::REPLICATION, entry);
+    string msg = Protocol::serialize(MessageType::REPLICATION, messageData);
     LOG_NODE("Replication message: " + msg);
     for (int i = 0; i < peers.size(); i++)
     {
-        LOG_BROADCAST(peers[i]);
+        LOG_BROADCAST("ip: " + peers[i].ip_address + " port: " + to_string(peers[i].port));
+
         sendToPeer(peers[i], msg);
     }
 }
@@ -138,9 +175,8 @@ int Node::openConnectionWithPeer(const NodeNetworkInfo &peerNetworkInfo)
     return sock;
 }
 
-void Node::sendToPeer(const string &peerNetworkData, const string &messageToSend)
+void Node::sendToPeer(const NodeNetworkInfo &peerNetworkInfo, const string &messageToSend)
 {
-    NodeNetworkInfo peerNetworkInfo = Protocol::deserializeNodeNetworkInfo(peerNetworkData);
     int sock = openConnectionWithPeer(peerNetworkInfo);
 
     if (sock > 0)
@@ -150,9 +186,52 @@ void Node::sendToPeer(const string &peerNetworkData, const string &messageToSend
     }
 }
 
-void sendAck();
-void handleAck(const string &ackMessage);
+void Node::sendAckToLeader(int entryIndex, const NodeNetworkInfo &leaderNetworkInfo)
+{
+    Message messageData;
+    messageData.logIndex = entryIndex;
 
+    string msg = Protocol::serialize(MessageType::ACK_NLE, messageData);
+    sendToPeer(leaderNetworkInfo, msg);
+
+    LOG_NODE("[FOLLOWER] sending ACK to the leader, ip: " + leaderNetworkInfo.ip_address + "port: " + to_string(leaderNetworkInfo.port));
+}
+
+void Node::handleAck(const string &ackMessage)
+{
+    Message messageData = Protocol::deserialize(ackMessage);
+    int logIndex = messageData.logIndex;
+
+    if (messageData.isValid && logIndex >= 0)
+    {
+        {
+            lock_guard<mutex> ack(ackMutex);
+            ackNewLogEntry[logIndex]++;
+        }
+    }
+
+    if (ackNewLogEntry[logIndex] == 1)
+    {
+        LOG_NODE("[LEADER] Confirmed ACK for entry from at leas one follower: " + to_string(logIndex));
+        // commit entry/write to the client.
+    }
+}
+
+////////////////
+// Getters ////
+//////////////
+
+NodeNetworkInfo Node::getNodeNetInfo(int nodeId)
+{
+    if (nodeId < 0 || nodeId > peers.size() - 1)
+    {
+        return NodeNetworkInfo();
+    }
+
+    return peers[nodeId];
+}
+
+NodeNetworkInfo getNodeNetInfo(int nodeId);
 ////////////////
 // Debugging///
 //////////////

@@ -8,7 +8,7 @@
 
 using namespace std;
 
-Server::Server(int p, Node *n) : port(p), node(n) {}
+Server::Server(string address, int p, Node *n) : ip(address), port(p), node(n) {} // Añadri la IP como escucha. Quitar lo de address.sin_addr.s_addr = INADDR_ANY;
 
 void Server::start()
 {
@@ -26,7 +26,8 @@ void Server::start()
 
     sockaddr_in address{};
     address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
+    // address.sin_addr.s_addr = INADDR_ANY;
+    inet_pton(AF_INET, ip.c_str(), &address.sin_addr);
     address.sin_port = htons(port);
 
     // Bind server socket descriptor with port number
@@ -46,52 +47,36 @@ void Server::start()
         sockaddr_in clientAddr;
         socklen_t len = sizeof(clientAddr);
 
-        int clientSocket = accept(serverFd, (sockaddr *)&clientAddr, &len);
-        NodeNetworkInfo inPeerNetworkInfo = getInPeerNetworkInfo(clientAddr);
+        int clientSocketDesc = accept(serverFd, (sockaddr *)&clientAddr, &len);
 
-        if (clientSocket < 0)
+        if (clientSocketDesc < 0)
         {
             LOG_ERROR("Server: Error client accept conection");
             continue;
         }
 
-        thread t(&Server::handleClient, this, clientSocket, inPeerNetworkInfo);
+        thread t(&Server::handleClient, this, clientSocketDesc);
         t.detach();
     }
 }
 
-void Server::handleClient(int clientSocket, const NodeNetworkInfo &clientNetworkInfo)
+void Server::handleClient(int clientSocketDesc)
 {
     if (!node)
     {
         LOG_ERROR("Node reference null");
-        close(clientSocket);
+        close(clientSocketDesc);
         return;
     }
 
     char buffer[1024] = {0};
-    int bytesRead = read(clientSocket, buffer, 1024);
+    int bytesRead = read(clientSocketDesc, buffer, 1024);
 
     if (bytesRead > 0)
     {
         string msg(buffer, bytesRead);
-        node->processMessage(msg, clientNetworkInfo);
+        node->processMessage(msg);
     }
 
-    close(clientSocket);
-}
-
-NodeNetworkInfo Server::getInPeerNetworkInfo(const sockaddr_in &inPeerAddress)
-{
-    NodeNetworkInfo res;
-
-    char ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &inPeerAddress.sin_addr, ip, INET_ADDRSTRLEN);
-
-    int port = ntohs(inPeerAddress.sin_port);
-
-    res.ip_address = ip;
-    res.port = port;
-
-    return res;
+    close(clientSocketDesc);
 }

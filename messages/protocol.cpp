@@ -5,6 +5,7 @@
 
 using namespace std;
 
+// This function is deprecated
 string Protocol::CreateReplicationMessage(int index, string key, string value)
 {
     stringstream ss;
@@ -14,22 +15,22 @@ string Protocol::CreateReplicationMessage(int index, string key, string value)
     return ss.str();
 }
 
-string Protocol::serialize(MessageType type, const LogEntry &entry)
+string Protocol::serialize(MessageType type, const Message &msgData)
 {
     stringstream ss;
 
     switch (type)
     {
     case MessageType::CLIENT_SET:
-        ss << "CLIENT_SET" << "|" << entry.key << "|" << entry.value;
+        ss << "CLIENT_SET" << "|" << msgData.key << "|" << msgData.value;
         break;
 
     case MessageType::REPLICATION:
-        ss << "REPLICATION" << "|" << entry.index << "|" << entry.key << "|" << entry.value;
+        ss << "REPLICATION" << "|" << msgData.nodeId << "|" << msgData.logIndex << "|" << msgData.key << "|" << msgData.value;
         break;
 
     case MessageType::ACK_NLE:
-        ss << "ACK_NLE" << "|" << entry.index;
+        ss << "ACK_NLE" << "|" << msgData.nodeId << "|" << msgData.logIndex;
         break;
 
     default:
@@ -40,13 +41,11 @@ string Protocol::serialize(MessageType type, const LogEntry &entry)
     return ss.str();
 }
 
-LogEntry Protocol::deserialize(const string &msg)
+Message Protocol::deserialize(const string &msg)
 {
     stringstream ss(msg);
     string token;
-    LogEntry entry;
-
-    entry.index = -1;
+    Message messageData;
 
     MessageType messageType = parseType(msg);
 
@@ -65,7 +64,7 @@ LogEntry Protocol::deserialize(const string &msg)
             break;
         }
 
-        entry.key = token;
+        messageData.key = token;
 
         // Value
         if (!getline(ss, token, '|'))
@@ -73,8 +72,8 @@ LogEntry Protocol::deserialize(const string &msg)
             break;
         }
 
-        entry.value = token;
-        entry.isValid = true;
+        messageData.value = token;
+        messageData.isValid = true;
         break;
     case MessageType::REPLICATION:
         // Message type
@@ -83,13 +82,21 @@ LogEntry Protocol::deserialize(const string &msg)
             break;
         }
 
+        // Node id
+        if (!getline(ss, token, '|'))
+        {
+            break;
+        }
+
+        messageData.nodeId = stoi(token);
+
         // Index
         if (!getline(ss, token, '|'))
         {
             break;
         }
 
-        entry.index = stoi(token);
+        messageData.logIndex = stoi(token);
 
         // Key
         if (!getline(ss, token, '|'))
@@ -97,7 +104,7 @@ LogEntry Protocol::deserialize(const string &msg)
             break;
         }
 
-        entry.key = token;
+        messageData.key = token;
 
         // Value
         if (!getline(ss, token, '|'))
@@ -105,8 +112,8 @@ LogEntry Protocol::deserialize(const string &msg)
             break;
         }
 
-        entry.value = token;
-        entry.isValid = true;
+        messageData.value = token;
+        messageData.isValid = true;
         break;
     case MessageType::ACK_NLE:
         // Message type
@@ -115,18 +122,26 @@ LogEntry Protocol::deserialize(const string &msg)
             break;
         }
 
+        // Node id
+        if (!getline(ss, token, '|'))
+        {
+            break;
+        }
+
+        messageData.nodeId = stoi(token);
+
         // Index
         if (!getline(ss, token, '|'))
         {
             break;
         }
 
-        entry.index = stoi(token);
-        entry.isValid = true;
+        messageData.logIndex = stoi(token);
+        messageData.isValid = true;
         break;
     }
 
-    return entry;
+    return messageData;
 }
 
 MessageType Protocol::parseType(const string &msg)

@@ -15,8 +15,8 @@ class Server;
 class Node
 {
 public:
-    Node(bool isLeader, int port, const vector<string> &peerList);
-    void processMessage(const string &msg, const NodeNetworkInfo &senderNetworkInfo);
+    Node(bool isLeader, string selfIp, int selfPort, const vector<string> &peerList);
+    void processMessage(const string &msg);
     void printState();
     void printLog();
     void run();
@@ -26,21 +26,27 @@ private:
     Server *server;
 
     bool leader;
-    vector<string> peers;
+    NodeNetworkInfo self;
+    // vector<string> peers;
+    unordered_map<int, NodeNetworkInfo> peers;
 
-    unordered_map<string, string> data;
+    unordered_map<string, string>
+        data;
     vector<LogEntry> log;
     mutex dataMutex;
     mutex ackMutex;
 
-    unordered_map<int, int> ack_new_log_entry;
+    unordered_map<int, int> ackNewLogEntry;
 
     void applyOperation(const LogEntry &entry);
-    void replicateToFollowers(const LogEntry &entry);
-    void sendToPeer(const string &peerNetworkData, const string &messageToSend);
+    void replicateToFollowers(const Message &messageData);
+    void sendToPeer(const NodeNetworkInfo &peerNetworkInfo, const string &messageToSend);
     int openConnectionWithPeer(const NodeNetworkInfo &peerNetworkInfo);
-    void sendAck();
+    void sendAckToLeader(int entryIndex, const NodeNetworkInfo &leaderNetworkInfo);
     void handleAck(const string &ackMessage);
+
+    // gets
+    NodeNetworkInfo getNodeNetInfo(int nodeId);
 
     // Checks
     void checkInconsistency();
