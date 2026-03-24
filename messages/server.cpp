@@ -75,8 +75,9 @@ void Server::handleClient(int clientSocketDesc)
     if (bytesRead > 0)
     {
         string msg(buffer, bytesRead);
-        node->processMessage(msg);
+        // node->processMessage(msg);
+        node->newRequest(clientSocketDesc, msg);
     }
 
-    close(clientSocketDesc);
+    // close(clientSocketDesc);
 }

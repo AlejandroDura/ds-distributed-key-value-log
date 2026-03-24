@@ -25,7 +25,14 @@ while True:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.connect((IP, PORT))
             s.sendall(MESSAGE.encode())
-            print("Message sended")
+            print("CLIENT: Message sended")
+
+            try:
+                data = s.recv(1024)
+                print("CLIENT: ", data.decode())
+            except socket.timeout:
+                print("ERROR: Server data not received")
+
     except Exception as e:
         print("Error:", e)
 

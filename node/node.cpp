@@ -53,7 +53,7 @@ void Node::applyOperation(const LogEntry &entry)
     log.push_back(entry);
 }
 
-void Node::processMessage(const string &msg)
+void Node::processMessage(const string &msg, int clientSocket)
 {
     Message messageData = Protocol::deserialize(msg);
     MessageType mType = Protocol::parseType(msg);
@@ -81,6 +81,7 @@ void Node::processMessage(const string &msg)
                 messageData.nodeId = self.nodeId;
 
                 applyOperation(newEntry);
+                addPendingClient(newEntry.index, clientSocket);
                 LOG_REPLICATION("[NODE LEADER] Aplying local operation");
             }
 
@@ -139,8 +140,12 @@ void Node::replicateToFollowers(const Message &messageData)
     LOG_NODE("Replication message: " + msg);
     for (int i = 0; i < peers.size(); i++)
     {
-        LOG_BROADCAST("ip: " + peers[i].ip_address + " port: " + to_string(peers[i].port));
+        if (peers[i].nodeId == self.nodeId)
+        {
+            continue;
+        }
 
+        LOG_BROADCAST("ip: " + peers[i].ip_address + " port: " + to_string(peers[i].port));
         sendToPeer(peers[i], msg);
     }
 }
@@ -190,6 +195,7 @@ void Node::sendAckToLeader(int entryIndex, const NodeNetworkInfo &leaderNetworkI
 {
     Message messageData;
     messageData.logIndex = entryIndex;
+    messageData.nodeId = self.nodeId;
 
     string msg = Protocol::serialize(MessageType::ACK_NLE, messageData);
     sendToPeer(leaderNetworkInfo, msg);
@@ -201,20 +207,105 @@ void Node::handleAck(const string &ackMessage)
 {
     Message messageData = Protocol::deserialize(ackMessage);
     int logIndex = messageData.logIndex;
+    int senderId = messageData.nodeId;
 
     if (messageData.isValid && logIndex >= 0)
     {
         {
             lock_guard<mutex> ack(ackMutex);
-            ackNewLogEntry[logIndex]++;
+            newLogEntryConfirmations[logIndex].insert(senderId);
+
+            if (newLogEntryConfirmations[logIndex].size() == 1)
+            {
+                LOG_NODE("[LEADER] Confirmed ACK for entry from at leas one follower: " + to_string(logIndex));
+                // commit entry/write to the client.
+                newLogEntryConfirmations.erase(logIndex); // Posible loop over all peers confirmation if we reset here.
+                commitClient(logIndex);
+            }
         }
     }
+}
 
-    if (ackNewLogEntry[logIndex] == 1)
+void Node::newRequest(int clientSocket, const string &msg)
+{
+    processMessage(msg, clientSocket);
+    MessageType messageType = Protocol::parseType(msg);
+
+    if (leader)
     {
-        LOG_NODE("[LEADER] Confirmed ACK for entry from at leas one follower: " + to_string(logIndex));
-        // commit entry/write to the client.
+        if (messageType != MessageType::CLIENT_SET)
+        {
+            close(clientSocket);
+        }
     }
+    else
+    {
+        close(clientSocket);
+    }
+}
+
+void Node::addPendingClient(int logIndex, int clientSocket)
+{
+    lock_guard<mutex> pClients(pendingClientsMutex);
+    pendingClients[logIndex] = clientSocket;
+    pendingLogEntries[logIndex] = true;
+    LOG_WARNING("Added a new client pending");
+}
+
+void Node::removePendingClient(int logIndex, int clientSocket)
+{
+    lock_guard<mutex> pClients(pendingClientsMutex);
+    pendingClients.erase(logIndex);
+    pendingLogEntries.erase(logIndex);
+}
+
+void Node::commitClient(int logIndex)
+{
+    int clientSocket = -1;
+
+    {
+        lock_guard<mutex> pClients(pendingClientsMutex);
+
+        auto it = pendingClients.find(logIndex);
+        if (it == pendingClients.end())
+        {
+            LOG_WARNING("no pending clients find");
+            return;
+        }
+
+        clientSocket = pendingClients[logIndex];
+        if (clientSocket < 0)
+        {
+            LOG_WARNING("Client socket is invalid");
+            return;
+        }
+
+        auto it_2 = pendingLogEntries.find(logIndex);
+        if (it_2 == pendingLogEntries.end())
+        {
+            LOG_WARNING("Pending log entries not found");
+            return;
+        }
+
+        if (!pendingLogEntries[logIndex])
+        {
+            LOG_WARNING("No pending entry for that entry");
+            return;
+        }
+
+        pendingClients.erase(logIndex);
+        pendingLogEntries.erase(logIndex);
+    }
+
+    string msg = "ACK COMMIT OK!";
+
+    int send_res = send(clientSocket, msg.c_str(), msg.size(), 0);
+    if (send_res < 0)
+    {
+        LOG_WARNING("Client disconected before commit");
+    }
+
+    close(clientSocket);
 }
 
 ////////////////
