@@ -249,16 +249,16 @@ void Node::newRequest(int clientSocket, const string &msg)
 void Node::addPendingClient(int logIndex, int clientSocket)
 {
     lock_guard<mutex> pClients(pendingClientsMutex);
-    pendingClients[logIndex] = clientSocket;
-    pendingLogEntries[logIndex] = true;
+    pending_clients[logIndex] = clientSocket;
+    pending_logEntries[logIndex] = true;
     LOG_WARNING("Added a new client pending");
 }
 
 void Node::removePendingClient(int logIndex, int clientSocket)
 {
     lock_guard<mutex> pClients(pendingClientsMutex);
-    pendingClients.erase(logIndex);
-    pendingLogEntries.erase(logIndex);
+    pending_clients.erase(logIndex);
+    pending_logEntries.erase(logIndex);
 }
 
 void Node::tryToCommitNewEntry(const Message &messageData)
@@ -270,23 +270,22 @@ void Node::tryToCommitNewEntry(const Message &messageData)
 
     {
         lock_guard<mutex> ack(ackMutex);
-        newLogEntryConfirmations[logIndex].insert(senderId);
+        ack_LogEntryConfirmations[logIndex].insert(senderId);
+    }
 
-        while (newLogEntryConfirmations[nextCommitIndex].size() == 1)
+    while (ack_LogEntryConfirmations[nextCommitIndex].size() == 1)
+    {
+        LOG_NODE("[LEADER] CommitIndex incremented, current: " + to_string(nextCommitIndex));
+        // commit entry/write to the client.
         {
-            LOG_NODE("[LEADER] CommitIndex incremented, current: " + to_string(nextCommitIndex));
-            // commit entry/write to the client.
-            // newLogEntryConfirmations.erase(nextCommitIndex); // Posible loop over all peers confirmation if we reset here.
-            {
-                lock_guard<mutex> lock(dataMutex);
-                LogEntry entry = log[nextCommitIndex];
-                applyOperation(entry);
-            }
-
-            commitClient(nextCommitIndex);
-            commitIndex = nextCommitIndex;
-            nextCommitIndex++;
+            lock_guard<mutex> lock(dataMutex);
+            LogEntry entry = log[nextCommitIndex];
+            applyOperation(entry);
         }
+
+        commitClient(nextCommitIndex);
+        commitIndex = nextCommitIndex;
+        nextCommitIndex++;
     }
 }
 
@@ -297,35 +296,35 @@ void Node::commitClient(int logIndex)
     {
         lock_guard<mutex> pClients(pendingClientsMutex);
 
-        auto it = pendingClients.find(logIndex);
-        if (it == pendingClients.end())
+        auto it = pending_clients.find(logIndex);
+        if (it == pending_clients.end())
         {
             LOG_WARNING("no pending clients find");
             return;
         }
 
-        clientSocket = pendingClients[logIndex];
+        clientSocket = pending_clients[logIndex];
         if (clientSocket < 0)
         {
             LOG_WARNING("Client socket is invalid");
             return;
         }
 
-        auto it_2 = pendingLogEntries.find(logIndex);
-        if (it_2 == pendingLogEntries.end())
+        auto it_2 = pending_logEntries.find(logIndex);
+        if (it_2 == pending_logEntries.end())
         {
             LOG_WARNING("Pending log entries not found");
             return;
         }
 
-        if (!pendingLogEntries[logIndex])
+        if (!pending_logEntries[logIndex])
         {
             LOG_WARNING("No pending entry for that entry");
             return;
         }
 
-        pendingClients.erase(logIndex);
-        pendingLogEntries.erase(logIndex);
+        pending_clients.erase(logIndex);
+        pending_logEntries.erase(logIndex);
     }
 
     string msg = "ACK COMMIT OK!";

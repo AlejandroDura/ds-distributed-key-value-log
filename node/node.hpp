@@ -42,7 +42,7 @@ private:
 
     int commitIndex = -1;
 
-    unordered_map<int, bool> pendingLogEntries;
+    unordered_map<int, bool> pending_logEntries;
 
     /**
      * @note Stores the pending clients, awaiting for a write confirmation in the system. Each operation
@@ -51,7 +51,7 @@ private:
      * @note Value: The client socket which is waiting for the confirmation of the operation
      * asociated with its log index.
      */
-    unordered_map<int, int> pendingClients;
+    unordered_map<int, int> pending_clients;
 
     /**
      * @note Stores a counter for each new log entry confirmation. Each new log entry can register more than one
@@ -59,7 +59,7 @@ private:
      * @note Key: logIndex
      * @note Value: ACK confirmation counter for a log index.
      */
-    unordered_map<int, unordered_set<int>> newLogEntryConfirmations;
+    unordered_map<int, unordered_set<int>> ack_LogEntryConfirmations;
 
     void addEntryToLog(const LogEntry &entry);
     void applyOperation(const LogEntry &entry);
