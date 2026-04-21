@@ -35,9 +35,12 @@ private:
     unordered_map<string, string>
         data;
     vector<LogEntry> log;
+    mutex logMutex;
     mutex dataMutex;
     mutex ackMutex;
     mutex pendingClientsMutex;
+
+    int commitIndex = -1;
 
     unordered_map<int, bool> pendingLogEntries;
 
@@ -58,6 +61,7 @@ private:
      */
     unordered_map<int, unordered_set<int>> newLogEntryConfirmations;
 
+    void addEntryToLog(const LogEntry &entry);
     void applyOperation(const LogEntry &entry);
     void replicateToFollowers(const Message &messageData);
     void sendToPeer(const NodeNetworkInfo &peerNetworkInfo, const string &messageToSend);
@@ -65,6 +69,8 @@ private:
     void sendAckToLeader(int entryIndex, const NodeNetworkInfo &leaderNetworkInfo);
     void handleAck(const string &ackMessage);
     void commitClient(int logIndex);
+
+    void tryToCommitNewEntry(const Message &messageData);
 
     /**
      * @note A client is waiting for its write confirmations. Each write operation has asociated its own

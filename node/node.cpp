@@ -50,6 +50,10 @@ void Node::run()
 void Node::applyOperation(const LogEntry &entry)
 {
     data[entry.key] = entry.value;
+}
+
+void Node::addEntryToLog(const LogEntry &entry)
+{
     log.push_back(entry);
 }
 
@@ -69,9 +73,9 @@ void Node::processMessage(const string &msg, int clientSocket)
 
         if (messageData.key != "")
         {
+            LogEntry newEntry;
             {
                 lock_guard<mutex> lock(dataMutex);
-                LogEntry newEntry;
 
                 newEntry.key = messageData.key;
                 newEntry.value = messageData.value;
@@ -80,11 +84,11 @@ void Node::processMessage(const string &msg, int clientSocket)
                 messageData.logIndex = newEntry.index;
                 messageData.nodeId = self.nodeId;
 
-                applyOperation(newEntry);
-                addPendingClient(newEntry.index, clientSocket);
+                addEntryToLog(newEntry);
                 LOG_REPLICATION("[NODE LEADER] Aplying local operation");
             }
 
+            addPendingClient(newEntry.index, clientSocket);
             replicateToFollowers(messageData);
         }
     }
@@ -105,12 +109,14 @@ void Node::processMessage(const string &msg, int clientSocket)
 
         if (messageData.logIndex >= 0 && messageData.key != "")
         {
+            LogEntry newEntry;
+            newEntry.index = messageData.logIndex;
+            newEntry.key = messageData.key;
+            newEntry.value = messageData.value;
+
             {
                 lock_guard<mutex> lock(dataMutex);
-                LogEntry newEntry;
-                newEntry.index = messageData.logIndex;
-                newEntry.key = messageData.key;
-                newEntry.value = messageData.value;
+                addEntryToLog(newEntry);
                 applyOperation(newEntry);
                 LOG_REPLICATION("[NODE FOLLOWER] Aplying local operation");
             }
@@ -211,18 +217,7 @@ void Node::handleAck(const string &ackMessage)
 
     if (messageData.isValid && logIndex >= 0)
     {
-        {
-            lock_guard<mutex> ack(ackMutex);
-            newLogEntryConfirmations[logIndex].insert(senderId);
-
-            if (newLogEntryConfirmations[logIndex].size() == 1)
-            {
-                LOG_NODE("[LEADER] Confirmed ACK for entry from at leas one follower: " + to_string(logIndex));
-                // commit entry/write to the client.
-                newLogEntryConfirmations.erase(logIndex); // Posible loop over all peers confirmation if we reset here.
-                commitClient(logIndex);
-            }
-        }
+        tryToCommitNewEntry(messageData);
     }
 }
 
@@ -233,6 +228,13 @@ void Node::newRequest(int clientSocket, const string &msg)
 
     if (leader)
     {
+        /**
+         * If I am the leader and the message is a CLIENT_SET then I need to wait to follower ACK
+         * confirmations to commit the client petition.
+         * If I am the leader and the message type is different from CLEINT_SET, then I can close the
+         * conection with that request.
+         * */
+
         if (messageType != MessageType::CLIENT_SET)
         {
             close(clientSocket);
@@ -257,6 +259,35 @@ void Node::removePendingClient(int logIndex, int clientSocket)
     lock_guard<mutex> pClients(pendingClientsMutex);
     pendingClients.erase(logIndex);
     pendingLogEntries.erase(logIndex);
+}
+
+void Node::tryToCommitNewEntry(const Message &messageData)
+{
+    int nextCommitIndex = commitIndex + 1;
+
+    int logIndex = messageData.logIndex;
+    int senderId = messageData.nodeId;
+
+    {
+        lock_guard<mutex> ack(ackMutex);
+        newLogEntryConfirmations[logIndex].insert(senderId);
+
+        while (newLogEntryConfirmations[nextCommitIndex].size() == 1)
+        {
+            LOG_NODE("[LEADER] CommitIndex incremented, current: " + to_string(nextCommitIndex));
+            // commit entry/write to the client.
+            // newLogEntryConfirmations.erase(nextCommitIndex); // Posible loop over all peers confirmation if we reset here.
+            {
+                lock_guard<mutex> lock(dataMutex);
+                LogEntry entry = log[nextCommitIndex];
+                applyOperation(entry);
+            }
+
+            commitClient(nextCommitIndex);
+            commitIndex = nextCommitIndex;
+            nextCommitIndex++;
+        }
+    }
 }
 
 void Node::commitClient(int logIndex)
